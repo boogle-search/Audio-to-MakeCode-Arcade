@@ -125,19 +125,19 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         if debug_output:
             print()
 
-    # Build the final TypeScript code using .format(), not f-string
-    ts_code = """namespace music {
+    # Build TypeScript code using double braces to escape literal {}
+    ts_code = """namespace music {{
 //% shim=music::queuePlayInstructions
-export function queuePlayInstructions(timeDelta: number, buf: Buffer) {}
-}
+export function queuePlayInstructions(timeDelta: number, buf: Buffer) {{}}
+}}
 
 const soundInstructions = [
     {}
 ];
 
-for (const soundInstruction of soundInstructions) {
+for (const soundInstruction of soundInstructions) {{
     music.queuePlayInstructions(100, soundInstruction);
-}""".format(",\n    ".join(sound_instruction_buffers))
+}}""".format(",\n    ".join(sound_instruction_buffers))
 
     return ts_code
 
@@ -150,4 +150,3 @@ if args.output is not None:
     output_path.write_text(code)
 else:
     print(code)
-
