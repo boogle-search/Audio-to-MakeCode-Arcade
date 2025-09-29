@@ -54,8 +54,8 @@ def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
     waveform: 3=sine, 1=triangle, 2=sawtooth
     """
     return struct.pack("<BBHHHHH",
-                       waveform,  # waveform
-                       0,         # unused
+                       waveform,
+                       0,
                        max(start_freq, 1),
                        duration,
                        constrain(start_vol, 0, 1024),
@@ -66,20 +66,20 @@ def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
 
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     """
-    Convert audio to MakeCode Arcade hex buffers with smoothing.
+    Convert audio to MakeCode Arcade hex buffers with smoothing and overlap.
     """
     spectrogram_frequency = period / 1000
+    nperseg = round(spectrogram_frequency * sample_rate)
+    noverlap = nperseg // 2  # 50% overlap for smooth transitions
     if can_log:
-        print(f"Generating spectrogram with a period of {period} ms "
-              f"(nperseg = {round(spectrogram_frequency * sample_rate)})")
+        print(f"Generating spectrogram with {period} ms period "
+              f"(nperseg={nperseg}, noverlap={noverlap})")
 
-    f, t, Sxx = signal.spectrogram(data, sample_rate, nperseg=round(
-        spectrogram_frequency * sample_rate))
+    f, t, Sxx = signal.spectrogram(data, sample_rate, nperseg=nperseg, noverlap=noverlap)
 
-    # Fewer buckets for smoother sound
     frequency_buckets = [50, 159, 317, 504, 800, 1270, 2016, 3200, 5080, 9000]
-
     max_freqs = 20
+
     if can_log:
         print(f"Gathering {max_freqs} loudest frequencies and amplitudes")
 
@@ -88,8 +88,8 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
     max_amp = np.max(Sxx)
 
-    # Simple smoothing: moving average across slices
-    window = 3
+    # Smooth amplitudes: moving average across slices
+    window = 4  # slightly larger for smoother output
     for i in range(loudest_amplitudes.shape[1]):
         loudest_amplitudes[:, i] = np.convolve(loudest_amplitudes[:, i],
                                                np.ones(window)/window,
@@ -107,23 +107,26 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
                 return i
         return -1
 
-    # Build buffers with proper hex`...` formatting
+    # Build buffers
     sound_instruction_buffers = []
     for bucket_index in range(len(frequency_buckets)):
         buffer = "hex`"
         for slice_index in range(len(loudest_frequencies)):
             freq_index = find_loudest_freq_index_in_bucket(slice_index, bucket_index)
             if freq_index != -1:
-                freq = round(loudest_frequencies[slice_index, freq_index])
+                # Average top 2 frequencies for smooth pitch transitions
+                top_indices = np.argsort(Sxx[:, slice_index])[-2:]
+                freq = round(np.average(loudest_frequencies[slice_index, top_indices],
+                                        weights=loudest_amplitudes[slice_index, top_indices]))
                 amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024 * VOLUME_MULTIPLIER)
-                amp = min(1024, amp)  # ensure max volume isn't exceeded
+                amp = min(1024, amp)
                 buffer += create_sound_instruction(freq, freq, amp, amp, period)
             else:
                 buffer += create_sound_instruction(0, 0, 0, 0, period)
         buffer += "`"
         sound_instruction_buffers.append(buffer)
 
-    # Output TypeScript code using playInstructions
+    # TypeScript output with playInstructions
     ts_code = """namespace music {{
 //% shim=music::queuePlayInstructions
 export function queuePlayInstructions(timeDelta: number, buf: Buffer) {{}}
