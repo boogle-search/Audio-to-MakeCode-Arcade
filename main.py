@@ -1,76 +1,155 @@
-import argparse
-import numpy as np
-import scipy.io.wavfile
-import scipy.signal
+import struct
+from argparse import ArgumentParser
 from pathlib import Path
 
-def audio_to_makecode_arcade(data, sample_rate, spectrogram_period):
-    # Convert stereo to mono if needed
-    if len(data.shape) > 1:
-        data = np.mean(data, axis=1)
+import numpy as np
+import scipy
 
-    # Normalize data
-    data = data.astype(np.float32)
-    data /= np.max(np.abs(data))
+parser = ArgumentParser(description="Convert audio to MakeCode Arcade hex buffers!")
+parser.add_argument("-i", "--input", metavar="PATH", type=Path, required=True,
+                    help="The input MONO WAV file.")
+parser.add_argument("-o", "--output", metavar="PATH", type=Path,
+                    required=False,
+                    help="The output TypeScript file which contains MakeCode Arcade code.")
+parser.add_argument("-p", "--period", metavar="MILLISECONDS", type=int, default=25,
+                    help="The period in milliseconds between each DFT for the spectrogram.")
+parser.add_argument("--debug", action="store_true",
+                    help="Print human readable strings instead of hex buffers for debugging")
+args = parser.parse_args()
 
-    # Spectrogram
-    nperseg = int(sample_rate * spectrogram_period / 1000)
-    noverlap = nperseg // 2
-    freqs, times, Sxx = scipy.signal.spectrogram(
-        data, fs=sample_rate, nperseg=nperseg, noverlap=noverlap
+debug_output = args.debug
+can_log = args.output is not None or debug_output
+spectrogram_period = args.period
+
+if can_log:
+    print(f"Arguments received: {args}")
+
+input_path = args.input.expanduser().resolve()
+if can_log:
+    print(f"Opening audio {input_path}")
+
+sample_rate, data = scipy.io.wavfile.read(input_path)
+channel_count = data.shape[1] if len(data.shape) > 1 else 1
+if channel_count > 1:
+    print(f"Audio has {channel_count} channels, but only the first will be used.")
+    data = data[:, 0]  # use first channel
+sample_count = data.shape[0]
+track_length = sample_count / sample_rate
+
+if can_log:
+    print(f"Audio has {sample_count} samples at {sample_rate} Hz, "
+          f"which is {track_length:.2f} seconds long.")
+
+
+def constrain(value, min_value, max_value):
+    return min(max(value, min_value), max_value)
+
+
+def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
+                             end_vol: int, duration: int) -> str:
+    """
+    Generate a MakeCode Arcade sound instruction.
+    """
+    return struct.pack("<BBHHHHH",
+                       3,  # sine waveform (8 bits)
+                       0,  # unused (8 bits)
+                       max(start_freq, 1),  # start frequency in hz (16 bits)
+                       duration,  # duration in ms (16 bits)
+                       constrain(start_vol, 0, 1024),  # start volume (16 bits)
+                       constrain(end_vol, 0, 1024),  # end volume (16 bits)
+                       max(end_freq, 1)  # end frequency in hz (16 bits)
+                       ).hex()
+
+
+def audio_to_makecode_arcade(data, sample_rate, period) -> str:
+    """
+    Convert audio to MakeCode Arcade hex buffers.
+    """
+    spectrogram_frequency = period / 1000
+    if can_log:
+        print(
+            f"Generating spectrogram with a period of {period} ms. (nperseg = {round(spectrogram_frequency * sample_rate)})")
+
+    f, t, Sxx = scipy.signal.spectrogram(
+        data,
+        sample_rate,
+        nperseg=round(spectrogram_frequency * sample_rate)
     )
 
-    # Gather top frequencies per slice
-    num_top = 20
-    loudest_frequencies = np.argsort(Sxx, axis=0)[-num_top:]
-    sound_instruction_buffers = []
+    frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008, 1270, 1600,
+                         2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
 
-    for slice_index in range(Sxx.shape[1]):
-        top_indices = loudest_frequencies[:, slice_index]
-        freq = round(np.average(freqs[top_indices]))
-        amp = np.max(Sxx[top_indices, slice_index])
-        if amp > 0.01:  # threshold to skip silence
-            buf = f"music.createSoundEffect(WaveShape.Sine, {freq}, {freq}, 255, 0, {spectrogram_period}, SoundExpressionEffect.None, InterpolationCurve.Linear)"
-            sound_instruction_buffers.append(buf)
+    max_freqs = 30
+    if can_log:
+        print(f"Gathering {max_freqs} loudest frequencies and amplitudes")
 
-    # TypeScript output
-    code = f"""namespace music {{
-    //% shim=music::playInstructions
-    export function playInstructions(timeDelta: number, buf: Buffer) {{}}
-}}
+    loudest_indices = np.argsort(Sxx, axis=0)[-max_freqs:]
+    loudest_frequencies = f[loudest_indices].transpose()
+    loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
+    max_amp = np.max(Sxx)
 
-const soundInstructions: Buffer[] = [
-    {",\n    ".join(sound_instruction_buffers)}
-];
+    if can_log:
+        print(f"Generating sound instructions")
 
-for (const instructions of soundInstructions) {{
-    music.playInstructions(100, instructions);
-}}
-"""
+    def find_loudest_freq_index_in_bucket(slice_index: int, bucket_index: int) -> int:
+        freqs = loudest_frequencies[slice_index]
+        low = frequency_buckets[bucket_index - 1] if bucket_index > 0 else 0
+        high = frequency_buckets[bucket_index]
+        for i in range(len(freqs) - 1, -1, -1):
+            if low <= freqs[i] <= high:
+                return i
+        return -1
+
+    if debug_output:
+        print(" " * 6, end="")
+        for bucket in frequency_buckets:
+            print(f"{bucket:>16}", end="")
+        print()
+
+    sound_instruction_buffers = ["hex`"] * len(frequency_buckets)
+    for slice_index in range(len(loudest_frequencies)):
+        if debug_output:
+            print(f"{slice_index:<6}", end="")
+        for bucket_index in range(len(frequency_buckets)):
+            freq_index = find_loudest_freq_index_in_bucket(slice_index, bucket_index)
+            if freq_index != -1:
+                freq = round(loudest_frequencies[slice_index, freq_index])
+                amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024)
+                sound_instruction_buffers[bucket_index] += create_sound_instruction(
+                    freq, freq, amp, amp, period)
+                if debug_output:
+                    print(f"{freq} Hz {amp} amp".rjust(16), end="")
+            else:
+                sound_instruction_buffers[bucket_index] += create_sound_instruction(
+                    0, 0, 0, 0, period)
+                if debug_output:
+                    print("0 Hz 0 amp".rjust(16), end="")
+        if debug_output:
+            print()
+    sound_instruction_buffers = [buffer + "`" for buffer in sound_instruction_buffers]
+
+    # TypeScript output (no f-strings to avoid syntax errors)
+    code = (
+        "namespace music {\n"
+        "    //% shim=music::playInstructions\n"
+        "    export function playInstructions(timeDelta: number, buf: Buffer) {}\n"
+        "}\n\n"
+        "const soundInstructions: Buffer[] = [\n"
+        "    " + ",\n    ".join(sound_instruction_buffers) + "\n"
+        "];\n\n"
+        "for (const instructions of soundInstructions) {\n"
+        "    music.playInstructions(100, instructions);\n"
+        "}\n"
+    )
+
     return code
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--period", type=int, default=25)
-    parser.add_argument("--debug", action="store_true")
-    args = parser.parse_args()
 
-    input_path = args.input
-    output_path = args.output
-    spectrogram_period = args.period
-
-    print(f"Opening audio {input_path}")
-    sample_rate, data = scipy.io.wavfile.read(input_path)
-    print(f"Audio has {len(data)} samples at {sample_rate} Hz")
-
-    code = audio_to_makecode_arcade(data, sample_rate, spectrogram_period)
-
-    with open(output_path, "w") as f:
-        f.write(code)
-
-    print(f"Wrote MakeCode file to {output_path}")
-
-if __name__ == "__main__":
-    main()
+code = audio_to_makecode_arcade(data, sample_rate, spectrogram_period)
+if args.output is not None:
+    output_path = args.output.expanduser().resolve()
+    if can_log:
+        print(f"Writing to {output_path}")
+    output_path.write_text(code)
+else:
+    print(code)
