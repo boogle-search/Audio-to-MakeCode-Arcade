@@ -105,27 +105,22 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
             print("{:>16}".format(bucket), end="")
         print()
 
-    sound_instruction_buffers = ["hex`"] * len(frequency_buckets)
-    for slice_index in range(len(loudest_frequencies)):
-        if debug_output:
-            print(f"{slice_index:<6}", end="")
-        for bucket_index in range(len(frequency_buckets)):
+    # Build buffers with proper hex`...` formatting
+    sound_instruction_buffers = []
+    for bucket_index in range(len(frequency_buckets)):
+        buffer = "hex`"
+        for slice_index in range(len(loudest_frequencies)):
             freq_index = find_loudest_freq_index_in_bucket(slice_index, bucket_index)
             if freq_index != -1:
                 freq = round(loudest_frequencies[slice_index, freq_index])
                 amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024)
-                sound_instruction_buffers[bucket_index] += create_sound_instruction(
-                    freq, freq, amp, amp, period)
-                if debug_output:
-                    print("{:>16}".format(f"{freq} Hz {amp} amp"), end="")
+                buffer += create_sound_instruction(freq, freq, amp, amp, period)
             else:
-                sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
-                if debug_output:
-                    print("{:>16}".format("0 Hz 0 amp"), end="")
-        if debug_output:
-            print()
+                buffer += create_sound_instruction(0, 0, 0, 0, period)
+        buffer += "`"
+        sound_instruction_buffers.append(buffer)
 
-    # Build TypeScript code using double braces to escape literal {}
+    # Join buffers with commas for MakeCode array
     ts_code = """namespace music {{
 //% shim=music::queuePlayInstructions
 export function queuePlayInstructions(timeDelta: number, buf: Buffer) {{}}
