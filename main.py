@@ -47,28 +47,21 @@ def constrain(value, min_value, max_value):
 
 def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                              end_vol: int, duration: int) -> str:
-    """
-    Generate a MakeCode Arcade sound instruction.
-    """
     return struct.pack("<BBHHHHH",
-                       3,  # sine waveform (8 bits)
-                       0,  # unused (8 bits)
-                       max(start_freq, 1),  # start frequency in hz (16 bits)
-                       duration,  # duration in ms (16 bits)
-                       constrain(start_vol, 0, 1024),  # start volume (16 bits)
-                       constrain(end_vol, 0, 1024),  # end volume (16 bits)
-                       max(end_freq, 1)  # end frequency in hz (16 bits)
+                       3,
+                       0,
+                       max(start_freq, 1),
+                       duration,
+                       constrain(start_vol, 0, 1024),
+                       constrain(end_vol, 0, 1024),
+                       max(end_freq, 1)
                        ).hex()
 
 
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
-    """
-    Convert audio to MakeCode Arcade hex buffers.
-    """
     spectrogram_frequency = period / 1000
     if can_log:
-        print(
-            f"Generating spectrogram with a period of {period} ms. (nperseg = {round(spectrogram_frequency * sample_rate)})")
+        print(f"Generating spectrogram with a period of {period} ms.")
 
     f, t, Sxx = scipy.signal.spectrogram(
         data,
@@ -76,63 +69,36 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         nperseg=round(spectrogram_frequency * sample_rate)
     )
 
-    frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008, 1270, 1600,
-                         2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
+    frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008,
+                         1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
 
     max_freqs = 30
-    if can_log:
-        print(f"Gathering {max_freqs} loudest frequencies and amplitudes")
-
     loudest_indices = np.argsort(Sxx, axis=0)[-max_freqs:]
     loudest_frequencies = f[loudest_indices].transpose()
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
     max_amp = np.max(Sxx)
 
-    if can_log:
-        print(f"Generating sound instructions")
-
-    def find_loudest_freq_index_in_bucket(slice_index: int, bucket_index: int) -> int:
-        freqs = loudest_frequencies[slice_index]
-        low = frequency_buckets[bucket_index - 1] if bucket_index > 0 else 0
-        high = frequency_buckets[bucket_index]
-        for i in range(len(freqs) - 1, -1, -1):
-            if low <= freqs[i] <= high:
-                return i
-        return -1
-
-    if debug_output:
-        print(" " * 6, end="")
-        for bucket in frequency_buckets:
-            print(f"{bucket:>16}", end="")
-        print()
-
-    # Start with empty buffers instead of "hex`"
-    sound_instruction_buffers = ["" for _ in range(len(frequency_buckets))]
+    sound_instruction_buffers = [""] * len(frequency_buckets)
 
     for slice_index in range(len(loudest_frequencies)):
-        if debug_output:
-            print(f"{slice_index:<6}", end="")
         for bucket_index in range(len(frequency_buckets)):
-            freq_index = find_loudest_freq_index_in_bucket(slice_index, bucket_index)
+            freqs = loudest_frequencies[slice_index]
+            low = frequency_buckets[bucket_index - 1] if bucket_index > 0 else 0
+            high = frequency_buckets[bucket_index]
+            freq_index = -1
+            for i in range(len(freqs) - 1, -1, -1):
+                if low <= freqs[i] <= high:
+                    freq_index = i
+                    break
             if freq_index != -1:
-                freq = round(loudest_frequencies[slice_index, freq_index])
+                freq = round(freqs[freq_index])
                 amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024)
-                sound_instruction_buffers[bucket_index] += create_sound_instruction(
-                    freq, freq, amp, amp, period)
-                if debug_output:
-                    print(f"{freq} Hz {amp} amp".rjust(16), end="")
+                sound_instruction_buffers[bucket_index] += create_sound_instruction(freq, freq, amp, amp, period)
             else:
-                sound_instruction_buffers[bucket_index] += create_sound_instruction(
-                    0, 0, 0, 0, period)
-                if debug_output:
-                    print("0 Hz 0 amp".rjust(16), end="")
-        if debug_output:
-            print()
+                sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
 
-    # Properly wrap in hex`...`
-    sound_instruction_buffers = [f"hex`{buffer}`" for buffer in sound_instruction_buffers]
+    sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
-    # TypeScript output
     code = (
         "namespace music {\n"
         "    //% shim=music::playInstructions\n"
@@ -145,7 +111,6 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         "    music.playInstructions(100, instructions);\n"
         "}\n"
     )
-
     return code
 
 
