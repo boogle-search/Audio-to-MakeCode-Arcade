@@ -22,6 +22,8 @@ debug_output = args.debug
 can_log = args.output is not None or debug_output
 spectrogram_period = args.period
 
+VOLUME_MULTIPLIER = 1.8  # Boost amplitude without losing smoothness
+
 if can_log:
     print(f"Arguments received: {args}")
 
@@ -113,7 +115,8 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
             freq_index = find_loudest_freq_index_in_bucket(slice_index, bucket_index)
             if freq_index != -1:
                 freq = round(loudest_frequencies[slice_index, freq_index])
-                amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024)
+                amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024 * VOLUME_MULTIPLIER)
+                amp = min(1024, amp)  # ensure max volume isn't exceeded
                 buffer += create_sound_instruction(freq, freq, amp, amp, period)
             else:
                 buffer += create_sound_instruction(0, 0, 0, 0, period)
