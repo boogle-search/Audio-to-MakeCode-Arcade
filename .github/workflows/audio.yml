@@ -24,6 +24,11 @@ jobs:
       run: |
         pip install numpy scipy
 
+    - name: Patch main.py to fix f-string error
+      run: |
+        # Replace problematic f-string line with single-quote version
+        sed -i 's/print(f"{\"\":>6}", end="")/print(f'\''{\"\":>6}'\'', end="")/' main.py
+
     - name: Convert all WAV files
       run: |
         mkdir -p output
