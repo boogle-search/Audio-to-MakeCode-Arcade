@@ -114,8 +114,8 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         for slice_index in range(len(loudest_frequencies)):
             freq_index = find_loudest_freq_index_in_bucket(slice_index, bucket_index)
             if freq_index != -1:
-                # Average top 2 frequencies for smooth pitch transitions
-                top_indices = np.argsort(Sxx[:, slice_index])[-2:]
+                # Fix: pick top 2 from loudest_amplitudes safely
+                top_indices = np.argsort(loudest_amplitudes[slice_index])[-2:]
                 freq = round(np.average(loudest_frequencies[slice_index, top_indices],
                                         weights=loudest_amplitudes[slice_index, top_indices]))
                 amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024 * VOLUME_MULTIPLIER)
