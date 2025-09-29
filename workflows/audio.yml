@@ -24,17 +24,18 @@ jobs:
       run: |
         pip install numpy scipy
 
-    - name: Run audio conversion
+    - name: Convert all WAV files
       run: |
         mkdir -p output
-        python scripts/audio_to_makecode.py \
-          -i audio/clip_mono.wav \
-          -o output/makecode_audio.ts
+        for file in audio/*.wav; do
+          base=$(basename "$file" .wav)
+          python scripts/audio_to_makecode.py -i "$file" -o "output/${base}.ts"
+        done
 
-    - name: Commit generated MakeCode file
+    - name: Commit generated MakeCode files
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add output/makecode_audio.ts
-        git commit -m "Auto-generate MakeCode audio" || echo "No changes"
+        git add output/*.ts
+        git commit -m "Auto-generate MakeCode audio files" || echo "No changes to commit"
         git push
