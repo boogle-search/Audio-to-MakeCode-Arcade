@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - "audio/**"
-      - "scripts/**"
+      - "main.py"
   workflow_dispatch:
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
         mkdir -p output
         for file in audio/*.wav; do
           base=$(basename "$file" .wav)
-          python scripts/audio_to_makecode.py -i "$file" -o "output/${base}.ts"
+          python main.py -i "$file" -o "output/${base}.ts"
         done
 
     - name: Commit generated MakeCode files
