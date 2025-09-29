@@ -1,0 +1,41 @@
+name: Convert Audio to MakeCode
+
+on:
+  push:
+    paths:
+      - "audio/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        pip install numpy scipy
+
+    - name: Convert all WAV files
+      run: |
+        mkdir -p output
+        for file in audio/*.wav; do
+          base=$(basename "$file" .wav)
+          python scripts/audio_to_makecode.py -i "$file" -o "output/${base}.ts"
+        done
+
+    - name: Commit generated MakeCode files
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add output/*.ts
+        git commit -m "Auto-generate MakeCode audio files" || echo "No changes to commit"
+        git push
