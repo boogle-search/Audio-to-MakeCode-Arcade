@@ -12,7 +12,7 @@ parser.add_argument("-i", "--input", metavar="PATH", type=Path, required=True,
 parser.add_argument("-o", "--output", metavar="PATH", type=Path,
                     required=False,
                     help="The output TypeScript file which contains MakeCode Arcade code.")
-parser.add_argument("-p", "--period", metavar="MILLISECONDS", type=int, default=25,
+parser.add_argument("-p", "--period", metavar="MILLISECONDS", type=int, default=50,
                     help="The period in milliseconds between each DFT for the spectrogram.")
 parser.add_argument("--debug", action="store_true",
                     help="Print human readable strings instead of hex buffers for debugging")
@@ -46,39 +46,38 @@ def constrain(value, min_value, max_value):
 
 
 def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
-                             end_vol: int, duration: int) -> str:
+                             end_vol: int, duration: int, waveform: int = 3) -> str:
     """
     Generate a MakeCode Arcade sound instruction.
+    waveform: 3=sine, 1=triangle, 2=sawtooth
     """
     return struct.pack("<BBHHHHH",
-                       3,  # sine waveform (8 bits)
-                       0,  # unused (8 bits)
-                       max(start_freq, 1),  # start frequency in hz (16 bits)
-                       duration,  # duration in ms (16 bits)
-                       constrain(start_freq, 0, 1024),  # start volume (16 bits)
-                       constrain(end_freq, 0, 1024),  # end volume (16 bits)
-                       max(end_freq, 1)  # end frequency in hz (16 bits)
+                       waveform,  # waveform
+                       0,         # unused
+                       max(start_freq, 1),
+                       duration,
+                       constrain(start_vol, 0, 1024),
+                       constrain(end_vol, 0, 1024),
+                       max(end_freq, 1)
                        ).hex()
 
 
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     """
-    Convert audio to MakeCode Arcade hex buffers.
+    Convert audio to MakeCode Arcade hex buffers with smoothing.
     """
     spectrogram_frequency = period / 1000
     if can_log:
-        print(
-            f"Generating spectrogram with a period of {period} ms. "
-            f"(nperseg = {round(spectrogram_frequency * sample_rate)})"
-        )
+        print(f"Generating spectrogram with a period of {period} ms "
+              f"(nperseg = {round(spectrogram_frequency * sample_rate)})")
 
     f, t, Sxx = signal.spectrogram(data, sample_rate, nperseg=round(
         spectrogram_frequency * sample_rate))
 
-    frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008,
-                         1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
+    # Fewer buckets for smoother sound
+    frequency_buckets = [50, 159, 317, 504, 800, 1270, 2016, 3200, 5080, 9000]
 
-    max_freqs = 30
+    max_freqs = 20
     if can_log:
         print(f"Gathering {max_freqs} loudest frequencies and amplitudes")
 
@@ -86,6 +85,13 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     loudest_frequencies = f[loudest_indices].transpose()
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
     max_amp = np.max(Sxx)
+
+    # Simple smoothing: moving average across slices
+    window = 3
+    for i in range(loudest_amplitudes.shape[1]):
+        loudest_amplitudes[:, i] = np.convolve(loudest_amplitudes[:, i],
+                                               np.ones(window)/window,
+                                               mode='same')
 
     if can_log:
         print(f"Generating sound instructions")
@@ -98,12 +104,6 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
             if low <= freqs[i] <= high:
                 return i
         return -1
-
-    if debug_output:
-        print("{:>6}".format(""), end="")
-        for bucket in frequency_buckets:
-            print("{:>16}".format(bucket), end="")
-        print()
 
     # Build buffers with proper hex`...` formatting
     sound_instruction_buffers = []
@@ -120,7 +120,7 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         buffer += "`"
         sound_instruction_buffers.append(buffer)
 
-    # Join buffers with commas for MakeCode array
+    # Output TypeScript code using playInstructions
     ts_code = """namespace music {{
 //% shim=music::queuePlayInstructions
 export function queuePlayInstructions(timeDelta: number, buf: Buffer) {{}}
@@ -130,8 +130,8 @@ const soundInstructions = [
     {}
 ];
 
-for (const soundInstruction of soundInstructions) {{
-    music.queuePlayInstructions(100, soundInstruction);
+for (const instructions of soundInstructions) {{
+    music.playInstructions(100, instructions);
 }}""".format(",\n    ".join(sound_instruction_buffers))
 
     return ts_code
