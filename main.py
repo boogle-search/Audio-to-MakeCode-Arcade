@@ -102,7 +102,7 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     if debug_output:
         print("{:>6}".format(""), end="")
         for bucket in frequency_buckets:
-            print(f"{bucket:>16}", end="")
+            print("{:>16}".format(bucket), end="")
         print()
 
     sound_instruction_buffers = ["hex`"] * len(frequency_buckets)
@@ -117,27 +117,29 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(
                     freq, freq, amp, amp, period)
                 if debug_output:
-                    print(f"{freq} Hz {amp} amp".rjust(16), end="")
+                    print("{:>16}".format(f"{freq} Hz {amp} amp"), end="")
             else:
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
                 if debug_output:
-                    print("0 Hz 0 amp".rjust(16), end="")
+                    print("{:>16}".format("0 Hz 0 amp"), end="")
         if debug_output:
             print()
-    sound_instruction_buffers = [buffer + "`" for buffer in sound_instruction_buffers]
 
-    return f"""namespace music {{
-    //% shim=music::queuePlayInstructions
-    export function queuePlayInstructions(timeDelta: number, buf: Buffer) {{}}
-}}
+    # Build the final TypeScript code using .format(), not f-string
+    ts_code = """namespace music {
+//% shim=music::queuePlayInstructions
+export function queuePlayInstructions(timeDelta: number, buf: Buffer) {}
+}
 
 const soundInstructions = [
-    {",\n    ".join(sound_instruction_buffers)}
+    {}
 ];
 
-for (const soundInstruction of soundInstructions) {{
+for (const soundInstruction of soundInstructions) {
     music.queuePlayInstructions(100, soundInstruction);
-}}"""
+}""".format(",\n    ".join(sound_instruction_buffers))
+
+    return ts_code
 
 
 code = audio_to_makecode_arcade(data, sample_rate, spectrogram_period)
@@ -148,3 +150,4 @@ if args.output is not None:
     output_path.write_text(code)
 else:
     print(code)
+
