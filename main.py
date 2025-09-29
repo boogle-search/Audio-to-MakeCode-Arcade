@@ -106,7 +106,9 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
             print(f"{bucket:>16}", end="")
         print()
 
-    sound_instruction_buffers = ["hex`"] * len(frequency_buckets)
+    # Start with empty buffers instead of "hex`"
+    sound_instruction_buffers = ["" for _ in range(len(frequency_buckets))]
+
     for slice_index in range(len(loudest_frequencies)):
         if debug_output:
             print(f"{slice_index:<6}", end="")
@@ -126,9 +128,11 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
                     print("0 Hz 0 amp".rjust(16), end="")
         if debug_output:
             print()
-    sound_instruction_buffers = [buffer + "`" for buffer in sound_instruction_buffers]
 
-    # TypeScript output (no f-strings to avoid syntax errors)
+    # Properly wrap in hex`...`
+    sound_instruction_buffers = [f"hex`{buffer}`" for buffer in sound_instruction_buffers]
+
+    # TypeScript output
     code = (
         "namespace music {\n"
         "    //% shim=music::playInstructions\n"
