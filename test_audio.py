@@ -57,9 +57,11 @@ def audio_to_makecode(data, sample_rate, period):
             else:
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(0,0,0,0,period)
 
+    # Wrap each buffer in hex`` properly
     sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
-    return (
+    # Generate final MakeCode TS with shim + wrapper
+    code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
         "    export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }\n\n"
@@ -67,16 +69,23 @@ def audio_to_makecode(data, sample_rate, period):
         "        queuePlayInstructions(timeDelta, buf);\n"
         "    }\n"
         "}\n\n"
-        f"const soundInstructions = [\n    {',\n    '.join(sound_instruction_buffers)}\n];\n\n"
+        "const soundInstructions = [\n    "
+        + ",\n    ".join(sound_instruction_buffers) +
+        "\n];\n\n"
         "for (const instructions of soundInstructions) {\n"
         "    music.playInstructions(100, instructions);\n"
         "}\n"
     )
+    return code
+
 
 # --- MAIN ---
 sample_rate, data = scipy.io.wavfile.read(input_path)
+
+# convert to mono if needed
 if len(data.shape) > 1 and data.shape[1] > 1:
     data = data[:, 0]
 
+# generate MakeCode .ts
 output_path.write_text(audio_to_makecode(data, sample_rate, period))
 print(f"Test MakeCode TS generated at {output_path}")
