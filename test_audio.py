@@ -1,12 +1,14 @@
 import struct
 from pathlib import Path
 import numpy as np
-import scipy
+import scipy.io.wavfile
 
 # --- CONFIG ---
-input_path = Path("audio/test.wav")  # put your test WAV here
-output_path = Path("output/test_output.ts")
+audio_folder = Path("audio")
+output_folder = Path("output")
 period = 25  # ms
+
+output_folder.mkdir(exist_ok=True)
 
 # --- FUNCTIONS ---
 def constrain(value, min_value, max_value):
@@ -57,10 +59,8 @@ def audio_to_makecode(data, sample_rate, period):
             else:
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(0,0,0,0,period)
 
-    # Wrap each buffer in hex`` properly
     sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
-    # Generate final MakeCode TS with shim + wrapper
     code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
@@ -78,14 +78,16 @@ def audio_to_makecode(data, sample_rate, period):
     )
     return code
 
-
 # --- MAIN ---
-sample_rate, data = scipy.io.wavfile.read(input_path)
+wav_files = list(audio_folder.glob("*.wav"))
 
-# convert to mono if needed
-if len(data.shape) > 1 and data.shape[1] > 1:
-    data = data[:, 0]
-
-# generate MakeCode .ts
-output_path.write_text(audio_to_makecode(data, sample_rate, period))
-print(f"Test MakeCode TS generated at {output_path}")
+if not wav_files:
+    print("No WAV files found in audio/. Exiting.")
+else:
+    for wav_file in wav_files:
+        sample_rate, data = scipy.io.wavfile.read(wav_file)
+        if len(data.shape) > 1 and data.shape[1] > 1:
+            data = data[:, 0]  # mono
+        output_file = output_folder / (wav_file.stem + ".ts")
+        output_file.write_text(audio_to_makecode(data, sample_rate, period))
+        print(f"Generated MakeCode TS: {output_file}")
