@@ -1,6 +1,10 @@
 namespace music {
     //% shim=music::queuePlayInstructions
     export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }
+
+    export function playInstructions(timeDelta: number, buf: Buffer) {
+        queuePlayInstructions(timeDelta, buf);
+    }
 }
 
 const soundInstructions = [
