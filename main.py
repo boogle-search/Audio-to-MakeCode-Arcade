@@ -28,17 +28,18 @@ input_path = args.input.expanduser().resolve()
 if can_log:
     print(f"Opening audio {input_path}")
 
+# Read WAV file
 sample_rate, data = scipy.io.wavfile.read(input_path)
-channel_count = data.shape[1] if len(data.shape) > 1 else 1
-if channel_count > 1:
-    print(f"Audio has {channel_count} channels, but only the first will be used.")
-    data = data[:, 0]  # use first channel
+
+# Convert to mono if necessary
+if len(data.shape) > 1 and data.shape[1] > 1:
+    print(f"Audio has {data.shape[1]} channels, using only the first channel.")
+    data = data[:, 0]
+
 sample_count = data.shape[0]
 track_length = sample_count / sample_rate
-
 if can_log:
-    print(f"Audio has {sample_count} samples at {sample_rate} Hz, "
-          f"which is {track_length:.2f} seconds long.")
+    print(f"Audio has {sample_count} samples at {sample_rate} Hz, {track_length:.2f} seconds long.")
 
 
 def constrain(value, min_value, max_value):
@@ -100,11 +101,14 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     # Wrap each buffer in hex`` properly
     sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
-    # Generate final MakeCode TS
+    # Generate final MakeCode TS with shim + wrapper
     code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
-        "    export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }\n"
+        "    export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }\n\n"
+        "    export function playInstructions(timeDelta: number, buf: Buffer) {\n"
+        "        queuePlayInstructions(timeDelta, buf);\n"
+        "    }\n"
         "}\n\n"
         "const soundInstructions = [\n"
         "    " + ",\n    ".join(sound_instruction_buffers) + "\n"
@@ -113,7 +117,6 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         "    music.playInstructions(100, instructions);\n"
         "}\n"
     )
-
     return code
 
 
