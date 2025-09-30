@@ -1,0 +1,28 @@
+name: Test Audio to MakeCode
+
+on:
+  workflow_dispatch:  # runs only when manually triggered
+
+jobs:
+  test-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install numpy scipy
+
+      - name: Create output folder
+        run: mkdir -p output
+
+      - name: Run test audio script
+        run: python test_audio.py
+
+      - name: List output
+        run: ls -l output
