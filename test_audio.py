@@ -75,14 +75,19 @@ def audio_to_makecode(data, sample_rate, period):
 
 # --- MAIN ---
 wav_files = list(audio_folder.glob("*.wav"))
+print("Looking for WAV files in:", audio_folder.resolve())
+print("Found:", wav_files)
 
 if not wav_files:
-    print("No WAV files found in audio/")
+    print("❌ No WAV files found in audio/")
 else:
     for wav_file in wav_files:
+        print(f"🎵 Processing {wav_file.name} ...")
         sample_rate, data = scipy.io.wavfile.read(wav_file)
         if len(data.shape) > 1:
-            data = data[:, 0]  # mono
+            print("⚠️ Stereo detected, using first channel only.")
+            data = data[:, 0]  # force mono
         output_file = output_folder / (wav_file.stem + ".ts")
-        output_file.write_text(audio_to_makecode(data, sample_rate, period))
-        print(f"Generated: {output_file}")
+        ts_code = audio_to_makecode(data, sample_rate, period)
+        output_file.write_text(ts_code)
+        print(f"✅ Generated {output_file}")
