@@ -1,7 +1,6 @@
 import struct
 from argparse import ArgumentParser
 from pathlib import Path
-
 import numpy as np
 import scipy
 
@@ -21,7 +20,12 @@ debug_output = args.debug
 can_log = args.output is not None or debug_output
 spectrogram_period = args.period
 
-input_path = args.input.expanduser()
+if can_log:
+    print(f"Arguments received: {args}")
+
+input_path = args.input.expanduser().resolve()
+if can_log:
+    print(f"Opening audio {input_path}")
 
 # Read WAV file
 sample_rate, data = scipy.io.wavfile.read(input_path)
@@ -44,7 +48,8 @@ def constrain(value, min_value, max_value):
 def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                              end_vol: int, duration: int) -> str:
     return struct.pack("<BBHHHHH",
-                       3, 0,
+                       3,  # sine waveform
+                       0,
                        max(start_freq, 1),
                        duration,
                        constrain(start_vol, 0, 1024),
@@ -53,65 +58,52 @@ def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                        ).hex()
 
 
-def moving_average_1d(arr, window_size=3):
-    return np.convolve(arr, np.ones(window_size)/window_size, mode="same")
+def audio_to_makecode_arcade(data, sample_rate, period, gain=2.5) -> str:
+    """Convert audio to MakeCode Arcade code with louder output"""
+    spectrogram_frequency = period / 1000
+    if can_log:
+        print(f"Generating spectrogram with a period of {period} ms.")
 
-
-def moving_average_2d(arr, window_size=3):
-    smoothed = np.zeros_like(arr)
-    for i in range(arr.shape[0]):
-        smoothed[i] = moving_average_1d(arr[i], window_size)
-    return smoothed
-
-
-def audio_to_makecode_arcade(data, sample_rate, period) -> str:
+    # Generate spectrogram
     f, t, Sxx = scipy.signal.spectrogram(
         data,
         sample_rate,
-        nperseg=round((period/1000) * sample_rate)
+        nperseg=round(spectrogram_frequency * sample_rate)
     )
 
     frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008,
-                         1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000]
+                         1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
 
     max_freqs = 30
     loudest_indices = np.argsort(Sxx, axis=0)[-max_freqs:]
     loudest_frequencies = f[loudest_indices].transpose()
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
-    max_amp = np.max(Sxx)
 
-    # Smooth amplitudes
-    loudest_amplitudes = moving_average_2d(loudest_amplitudes, window_size=3)
-
-    # Create dedicated threads per bucket
-    threads = [[] for _ in frequency_buckets]
+    # Apply gain and normalize per bucket
+    sound_instruction_buffers = [""] * len(frequency_buckets)
+    max_amp = np.max(loudest_amplitudes)
 
     for slice_index in range(len(loudest_frequencies)):
-        prev_bucket_high = 0
-        for bucket_index, bucket_high in enumerate(frequency_buckets):
+        for bucket_index in range(len(frequency_buckets)):
             freqs = loudest_frequencies[slice_index]
-            amps = loudest_amplitudes[slice_index]
-
-            # pick the loudest frequency in this bucket range
-            freq_idx = -1
-            for i in range(len(freqs)-1, -1, -1):
-                if prev_bucket_high <= freqs[i] <= bucket_high:
-                    freq_idx = i
+            low = frequency_buckets[bucket_index - 1] if bucket_index > 0 else 0
+            high = frequency_buckets[bucket_index]
+            freq_index = -1
+            for i in range(len(freqs) - 1, -1, -1):
+                if low <= freqs[i] <= high:
+                    freq_index = i
                     break
-
-            if freq_idx != -1:
-                freq = round(freqs[freq_idx])
-                amp = round(amps[freq_idx] / max_amp * 1024)
-                threads[bucket_index].append(create_sound_instruction(freq, freq, amp, amp, period))
+            if freq_index != -1:
+                freq = round(freqs[freq_index])
+                amp = round(min(1024, (loudest_amplitudes[slice_index, freq_index] / max_amp * 1024) * gain))
+                sound_instruction_buffers[bucket_index] += create_sound_instruction(freq, freq, amp, amp, period)
             else:
-                threads[bucket_index].append(create_sound_instruction(0, 0, 0, 0, period))
+                sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
 
-            prev_bucket_high = bucket_high
+    # Wrap buffers in hex`` properly
+    sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
-    # Wrap each buffer in hex`` properly
-    sound_instruction_buffers = [f"hex`{''.join(thread)}`" for thread in threads]
-
-    # MakeCode TS code (only queuePlayInstructions)
+    # MakeCode output
     code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
@@ -128,13 +120,10 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
 
 
 code = audio_to_makecode_arcade(data, sample_rate, spectrogram_period)
-
-# Always overwrite output
 if args.output is not None:
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(code)
+    output_path = args.output.expanduser().resolve()
     if can_log:
-        print(f"Written output to {output_path}")
+        print(f"Writing to {output_path}")
+    output_path.write_text(code)
 else:
     print(code)
