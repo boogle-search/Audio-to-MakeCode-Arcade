@@ -1,10 +1,6 @@
 namespace music {
     //% shim=music::queuePlayInstructions
     export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }
-
-    export function playInstructions(timeDelta: number, buf: Buffer) {
-        queuePlayInstructions(timeDelta, buf);
-    }
 }
 
 const soundInstructions = [
@@ -31,5 +27,5 @@ const soundInstructions = [
 ];
 
 for (const instructions of soundInstructions) {
-    music.playInstructions(100, instructions);
+    music.queuePlayInstructions(100, instructions);
 }
