@@ -119,16 +119,13 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
-        "    export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }\n\n"
-        "    export function playInstructions(timeDelta: number, buf: Buffer) {\n"
-        "        queuePlayInstructions(timeDelta, buf);\n"
-        "    }\n"
+        "    export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }\n"
         "}\n\n"
         "const soundInstructions = [\n"
         "    " + ",\n    ".join(sound_instruction_buffers) + "\n"
         "];\n\n"
         "for (const instructions of soundInstructions) {\n"
-        "    music.playInstructions(100, instructions);\n"
+        "    music.queuePlayInstructions(100, instructions);\n"
         "}\n"
     )
     return code
