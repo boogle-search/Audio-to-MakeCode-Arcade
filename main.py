@@ -72,7 +72,7 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     )
 
     frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008,
-                         1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
+                         1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000]
 
     max_freqs = 30
     loudest_indices = np.argsort(Sxx, axis=0)[-max_freqs:]
@@ -80,34 +80,38 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
     max_amp = np.max(Sxx)
 
-    # Smooth amplitudes for cleaner sound
+    # Smooth amplitudes
     loudest_amplitudes = moving_average_2d(loudest_amplitudes, window_size=3)
 
-    sound_instruction_buffers = [""] * len(frequency_buckets)
+    # Create dedicated threads per bucket
+    threads = [[] for _ in frequency_buckets]
 
     for slice_index in range(len(loudest_frequencies)):
-        freqs = loudest_frequencies[slice_index]
-        amps = loudest_amplitudes[slice_index]
+        prev_bucket_high = 0
+        for bucket_index, bucket_high in enumerate(frequency_buckets):
+            freqs = loudest_frequencies[slice_index]
+            amps = loudest_amplitudes[slice_index]
 
-        for bucket_index in range(len(frequency_buckets)):
-            low = frequency_buckets[bucket_index - 1] if bucket_index > 0 else 0
-            high = frequency_buckets[bucket_index]
-            freq_index = -1
+            # pick the loudest frequency in this bucket range
+            freq_idx = -1
             for i in range(len(freqs)-1, -1, -1):
-                if low <= freqs[i] <= high:
-                    freq_index = i
+                if prev_bucket_high <= freqs[i] <= bucket_high:
+                    freq_idx = i
                     break
-            if freq_index != -1:
-                freq = round(freqs[freq_index])
-                amp = round(amps[freq_index] / max_amp * 1024)
-                sound_instruction_buffers[bucket_index] += create_sound_instruction(freq, freq, amp, amp, period)
+
+            if freq_idx != -1:
+                freq = round(freqs[freq_idx])
+                amp = round(amps[freq_idx] / max_amp * 1024)
+                threads[bucket_index].append(create_sound_instruction(freq, freq, amp, amp, period))
             else:
-                sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
+                threads[bucket_index].append(create_sound_instruction(0, 0, 0, 0, period))
+
+            prev_bucket_high = bucket_high
 
     # Wrap each buffer in hex`` properly
-    sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
+    sound_instruction_buffers = [f"hex`{''.join(thread)}`" for thread in threads]
 
-    # Only queuePlayInstructions function to avoid duplicates
+    # MakeCode TS code (only queuePlayInstructions)
     code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
