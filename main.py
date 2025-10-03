@@ -45,22 +45,19 @@ def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                        ).hex()
 
 def moving_average_1d(arr, window_size=3):
-    """Smooth a 1D array."""
     return np.convolve(arr, np.ones(window_size)/window_size, mode="same")
 
 def moving_average_2d(arr, window_size=3):
-    """Smooth each row (slice) of a 2D array independently."""
     smoothed = np.zeros_like(arr)
     for i in range(arr.shape[0]):
         smoothed[i] = moving_average_1d(arr[i], window_size)
     return smoothed
 
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
-    spectrogram_frequency = period / 1000
     f, t, Sxx = scipy.signal.spectrogram(
         data,
         sample_rate,
-        nperseg=round(spectrogram_frequency * sample_rate)
+        nperseg=round((period/1000) * sample_rate)
     )
 
     frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008,
@@ -72,7 +69,6 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
     max_amp = np.max(Sxx)
 
-    # Smooth each slice for cleaner sound
     loudest_amplitudes = moving_average_2d(loudest_amplitudes, window_size=3)
 
     sound_instruction_buffers = [""] * len(frequency_buckets)
@@ -96,10 +92,9 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
             else:
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
 
-    # Wrap each buffer in hex`` properly
     sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
-    # Final MakeCode output
+    # Only queuePlayInstructions function to avoid duplicates
     code = (
         "namespace music {\n"
         "    //% shim=music::queuePlayInstructions\n"
