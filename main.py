@@ -59,6 +59,13 @@ def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                        ).hex()
 
 
+def moving_average(arr, window_size=3):
+    """Simple smoothing with a centered moving average."""
+    if window_size < 2:
+        return arr
+    return np.convolve(arr, np.ones(window_size)/window_size, mode="same")
+
+
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     spectrogram_frequency = period / 1000
     if can_log:
@@ -70,6 +77,7 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
         nperseg=round(spectrogram_frequency * sample_rate)
     )
 
+    # --- Frequency bucket ranges ---
     frequency_buckets = [50, 159, 200, 252, 317, 400, 504, 635, 800, 1008,
                          1270, 1600, 2016, 2504, 3200, 4032, 5080, 7000, 9000, 10240]
 
@@ -82,8 +90,13 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     sound_instruction_buffers = [""] * len(frequency_buckets)
 
     for slice_index in range(len(loudest_frequencies)):
+        freqs = loudest_frequencies[slice_index]
+        amps = loudest_amplitudes[slice_index]
+
+        # Smooth amplitudes a little
+        amps = moving_average(amps, window_size=3)
+
         for bucket_index in range(len(frequency_buckets)):
-            freqs = loudest_frequencies[slice_index]
             low = frequency_buckets[bucket_index - 1] if bucket_index > 0 else 0
             high = frequency_buckets[bucket_index]
             freq_index = -1
@@ -93,9 +106,10 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
                     break
             if freq_index != -1:
                 freq = round(freqs[freq_index])
-                amp = round(loudest_amplitudes[slice_index, freq_index] / max_amp * 1024)
+                amp = round(amps[freq_index] / max_amp * 1024)
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(freq, freq, amp, amp, period)
             else:
+                # silence
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
 
     # Wrap each buffer in hex`` properly
