@@ -21,17 +21,25 @@ debug_output = args.debug
 can_log = args.output is not None or debug_output
 spectrogram_period = args.period
 
-input_path = args.input.expanduser().resolve()
+input_path = args.input.expanduser()
 
 # Read WAV file
 sample_rate, data = scipy.io.wavfile.read(input_path)
 
 # Convert to mono if necessary
 if len(data.shape) > 1 and data.shape[1] > 1:
+    print(f"Audio has {data.shape[1]} channels, using only the first channel.")
     data = data[:, 0]
+
+sample_count = data.shape[0]
+track_length = sample_count / sample_rate
+if can_log:
+    print(f"Audio has {sample_count} samples at {sample_rate} Hz, {track_length:.2f} seconds long.")
+
 
 def constrain(value, min_value, max_value):
     return min(max(value, min_value), max_value)
+
 
 def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                              end_vol: int, duration: int) -> str:
@@ -44,14 +52,17 @@ def create_sound_instruction(start_freq: int, end_freq: int, start_vol: int,
                        max(end_freq, 1)
                        ).hex()
 
+
 def moving_average_1d(arr, window_size=3):
     return np.convolve(arr, np.ones(window_size)/window_size, mode="same")
+
 
 def moving_average_2d(arr, window_size=3):
     smoothed = np.zeros_like(arr)
     for i in range(arr.shape[0]):
         smoothed[i] = moving_average_1d(arr[i], window_size)
     return smoothed
+
 
 def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     f, t, Sxx = scipy.signal.spectrogram(
@@ -69,6 +80,7 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     loudest_amplitudes = Sxx[loudest_indices, np.arange(Sxx.shape[1])].transpose()
     max_amp = np.max(Sxx)
 
+    # Smooth amplitudes for cleaner sound
     loudest_amplitudes = moving_average_2d(loudest_amplitudes, window_size=3)
 
     sound_instruction_buffers = [""] * len(frequency_buckets)
@@ -92,6 +104,7 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
             else:
                 sound_instruction_buffers[bucket_index] += create_sound_instruction(0, 0, 0, 0, period)
 
+    # Wrap each buffer in hex`` properly
     sound_instruction_buffers = [f"hex`{buf}`" for buf in sound_instruction_buffers]
 
     # Only queuePlayInstructions function to avoid duplicates
@@ -109,10 +122,15 @@ def audio_to_makecode_arcade(data, sample_rate, period) -> str:
     )
     return code
 
+
 code = audio_to_makecode_arcade(data, sample_rate, spectrogram_period)
 
+# Always overwrite output
 if args.output is not None:
-    output_path = args.output.expanduser().resolve()
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(code)
+    if can_log:
+        print(f"Written output to {output_path}")
 else:
     print(code)
