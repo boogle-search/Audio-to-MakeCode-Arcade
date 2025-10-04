@@ -1,5 +1,1 @@
-Instructions
-1. Fork this Repo and remove whatever .wav files are in the audio folder
-2. Add your .wav file to the audio folder
-3. Let the action run and check the outputs folder
-4. Copy and paste the output into makecode arcade
+This is a tool for MakeCode Arcade which allows users to transfer .wav files to MakeCode. It only transfers mono .wav files, but if you give it a stereo file it should downmix it first, then transfer the audio. You can now use the converte [here instead](https://homeassistanttycoon.github.io/Audio-to-MakeCode-Arcade/)
