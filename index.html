@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MakeCode Audio Converter — drag & drop</title>
+<style>
+  :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  body{margin:0;background:#0b1220;color:#e6eef6;display:flex;flex-direction:column;min-height:100vh}
+  header{padding:18px 24px;background:#071024;border-bottom:1px solid rgba(255,255,255,0.04)}
+  h1{margin:0;font-size:20px}
+  main{flex:1;display:flex;gap:20px;padding:24px;align-items:flex-start;flex-wrap:wrap}
+  .panel{background:#071528;padding:18px;border-radius:8px;box-shadow:0 6px 18px rgba(2,6,23,0.5);flex:1;min-width:320px}
+  #drop{border:2px dashed rgba(255,255,255,0.06);padding:28px;text-align:center;border-radius:8px;cursor:pointer}
+  input[type=file]{display:none}
+  button{background:#1b6cff;color:white;border:0;padding:10px 12px;border-radius:6px;cursor:pointer}
+  pre, textarea{background:#041021;color:#d3e7ff;padding:12px;border-radius:6px;overflow:auto;max-height:520px;white-space:pre-wrap}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+  label{font-size:13px;color:#9fb0d1}
+  small{color:#9fb0d1}
+  footer{padding:12px 24px;text-align:center;font-size:13px;color:#9fb0d1}
+  .loading{opacity:.7}
+  .mini{font-size:12px;color:#9fb0d1}
+  .row{display:flex;gap:8px;align-items:center}
+  .linklike{color:#8fbfff;text-decoration:underline;cursor:pointer}
+</style>
+</head>
+<body>
+<header><h1>MakeCode Audio Converter — Drag & Drop WAV</h1></header>
+
+<main>
+  <section class="panel" style="max-width:540px;">
+    <div id="drop">
+      <p style="margin:0 0 8px 0"><strong>Drop a WAV file here</strong></p>
+      <p style="margin:0 0 12px 0"><small>PCM WAV (mono or stereo). We'll downmix stereo automatically.</small></p>
+      <div class="row" style="justify-content:center">
+        <button id="pick">Select file</button>
+        <input id="fileInput" type="file" accept=".wav,audio/wav" />
+        <button id="clear">Clear</button>
+      </div>
+    </div>
+
+    <div style="margin-top:14px" class="controls">
+      <label>Period (ms)
+        <input id="period" type="number" value="25" min="8" style="width:80px;margin-left:6px">
+      </label>
+      <label>Gain
+        <input id="gain" type="number" value="2.5" step="0.1" min="0.1" style="width:80px;margin-left:6px">
+      </label>
+      <label>Smooth
+        <input id="smooth" type="number" value="3" min="1" style="width:80px;margin-left:6px">
+      </label>
+      <button id="go">Convert</button>
+    </div>
+
+    <div id="status"><small>Drop a WAV to begin.</small></div>
+    <div class="mini" style="margin-top:8px">Buckets: voice/music tuned to 50–9kHz, 19 buckets (forum method).</div>
+  </section>
+
+  <section class="panel" style="flex:1 1 680px;">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Generated TypeScript (paste into MakeCode)</h3>
+      <div>
+        <button id="copy">Copy</button>
+        <button id="download">Download .ts</button>
+      </div>
+    </div>
+    <pre id="output">// result will appear here</pre>
+    <div style="margin-top:12px" class="mini">
+      <strong>Tip:</strong> If the output sounds quiet in MakeCode, increase Gain or raise volumes in the generated buffers.
+    </div>
+  </section>
+
+  <section class="panel" style="min-width:340px;max-width:380px">
+    <h3 style="margin-top:0">Instructions</h3>
+    <p>Paste the generated TypeScript into your MakeCode Arcade project's JavaScript editor. The code contains a shim for <code>queuePlayInstructions</code> and a <code>soundInstructions</code> array of <code>hex`...`</code> buffers. It plays them by calling <code>music.queuePlayInstructions(100, buffer)</code>.</p>
+
+    <p>Recommended settings: <strong>Period</strong> 25–50 ms, <strong>Gain</strong> 1.5–4, <strong>Smooth</strong> 3–7.</p>
+
+    <h4 style="margin-bottom:6px">Your notes</h4>
+    <textarea id="notes" placeholder="Write custom instructions for users here... (this will not be published anywhere)"></textarea>
+  </section>
+</main>
+
+<footer>
+  Built for MakeCode — outputs <code>namespace music { /* shim=music::queuePlayInstructions */ }</code> + <code>soundInstructions</code>.
+</footer>
+
+<script>
+/* ============================
+   Client-side WAV -> MakeCode converter
+   - Decodes WAV with Web Audio API
+   - Computes per-frame FFT, maps to buckets
+   - Creates one hex buffer per bucket (thread)
+   - Smoothing and gain options
+   - Produces TypeScript you can paste into MakeCode Arcade
+   ============================ */
+
+/* ---------- Utilities & FFT ---------- */
+// Cooley-Tukey radix-2 FFT (real input)
+function fftReIm(signalReal) {
+  const n0 = signalReal.length;
+  // pad to power of two
+  let n = 1;
+  while (n < n0) n <<= 1;
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  re.set(signalReal);
+  // bit reversal
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { const tmp = re[i]; re[i] = re[j]; re[j] = tmp; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wlenRe = Math.cos(ang), wlenIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let wRe = 1, wIm = 0;
+      for (let j = 0; j < len/2; j++) {
+        const uRe = re[i+j], uIm = im[i+j];
+        const vRe = re[i+j+len/2] * wRe - im[i+j+len/2] * wIm;
+        const vIm = re[i+j+len/2] * wIm + im[i+j+len/2] * wRe;
+        re[i+j] = uRe + vRe; im[i+j] = uIm + vIm;
+        re[i+j+len/2] = uRe - vRe; im[i+j+len/2] = uIm - vIm;
+        const nextWRe = wRe * wlenRe - wIm * wlenIm;
+        wIm = wRe * wlenIm + wIm * wlenRe;
+        wRe = nextWRe;
+      }
+    }
+  }
+  return { re, im, n };
+}
+function magnitudeFromReIm(re, im) {
+  const n = re.length, mag = new Float64Array(n);
+  for (let i = 0; i < n; i++) mag[i] = Math.hypot(re[i], im[i]);
+  return mag;
+}
+function hannWindow(N) {
+  const w = new Float64Array(N);
+  for (let i=0;i<N;i++) w[i] = 0.5*(1 - Math.cos(2*Math.PI*i/(N-1)));
+  return w;
+}
+function bytesToHex(bytes){
+  let s = "";
+  for (let i=0;i<bytes.length;i++){
+    s += ("0"+bytes[i].toString(16)).slice(-2);
+  }
+  return s;
+}
+/* pack instructions into <BBHHHHH> little-endian */
+function packInstructionArray(instructions){
+  const buf = new Uint8Array(instructions.length * 12);
+  for (let i=0;i<instructions.length;i++){
+    const base = i*12;
+    const ins = instructions[i];
+    const waveform = ins.waveform||3;
+    buf[base] = waveform & 0xFF;
+    buf[base+1] = 0;
+    buf[base+2] = ins.startHz & 0xFF;
+    buf[base+3] = (ins.startHz >> 8) & 0xFF;
+    buf[base+4] = ins.duration & 0xFF;
+    buf[base+5] = (ins.duration >> 8) & 0xFF;
+    buf[base+6] = ins.startAmp & 0xFF;
+    buf[base+7] = (ins.startAmp >> 8) & 0xFF;
+    buf[base+8] = ins.endAmp & 0xFF;
+    buf[base+9] = (ins.endAmp >> 8) & 0xFF;
+    buf[base+10] = ins.endHz & 0xFF;
+    buf[base+11] = (ins.endHz >> 8) & 0xFF;
+  }
+  return bytesToHex(buf);
+}
+
+/* ---------- UI elements ---------- */
+const fileInput = document.getElementById('fileInput');
+const pickBtn = document.getElementById('pick');
+const drop = document.getElementById('drop');
+const go = document.getElementById('go');
+const periodEl = document.getElementById('period');
+const gainEl = document.getElementById('gain');
+const smoothEl = document.getElementById('smooth');
+const status = document.getElementById('status');
+const output = document.getElementById('output');
+const copyBtn = document.getElementById('copy');
+const downloadBtn = document.getElementById('download');
+const clearBtn = document.getElementById('clear');
+
+const buckets = [50,159,200,252,317,400,504,635,800,1008,1270,1600,2016,2504,3200,4032,5080,7000,9000]; // 19 buckets
+
+let currentBuffer = null;
+pickBtn.onclick = ()=>fileInput.click();
+fileInput.onchange = (e)=>handleFiles(e.target.files);
+drop.onclick = ()=>fileInput.click();
+clearBtn.onclick = ()=>{ currentBuffer=null; output.textContent="// cleared"; status.innerHTML="<small>Cleared.</small>"; }
+
+/* drag-drop visuals */
+drop.ondragover = (e)=>{ e.preventDefault(); drop.style.borderColor='rgba(255,255,255,0.28)'; };
+drop.ondragleave = ()=>{ drop.style.borderColor='rgba(255,255,255,0.06)'; };
+drop.ondrop = (e)=>{ e.preventDefault(); drop.style.borderColor='rgba(255,255,255,0.06)'; handleFiles(e.dataTransfer.files); };
+
+function setStatus(s){ status.innerHTML = "<small>"+s+"</small>"; }
+
+/* read and decode */
+async function handleFiles(files){
+  if (!files || files.length===0) return;
+  const f = files[0];
+  setStatus(`Decoding ${f.name}...`);
+  output.textContent = `// Decoding ${f.name}...`;
+  try {
+    const arr = await f.arrayBuffer();
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await ac.decodeAudioData(arr.slice(0));
+    let samples = decoded.getChannelData(0);
+    if (decoded.numberOfChannels > 1) {
+      // downmix to mono
+      const out = new Float32Array(decoded.length);
+      for (let i=0;i<decoded.length;i++){
+        let s=0;
+        for (let c=0;c<decoded.numberOfChannels;c++) s += decoded.getChannelData(c)[i];
+        out[i] = s / decoded.numberOfChannels;
+      }
+      samples = out;
+    }
+    currentBuffer = {samples: samples, sampleRate: decoded.sampleRate, duration: decoded.duration, name: f.name};
+    setStatus(`Loaded ${f.name} — ${decoded.duration.toFixed(2)}s @ ${decoded.sampleRate}Hz`);
+    output.textContent = "// Ready. Click Convert.";
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to decode file.");
+    output.textContent = "// Error decoding file. Make sure it's a standard WAV.";
+  }
+}
+
+/* main processing */
+go.onclick = ()=>{ if (!currentBuffer) return setStatus("Drop a WAV first."); processAndGenerate(); }
+
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+function processAndGenerate(){
+  setStatus("Processing...");
+  output.textContent = "// processing...";
+  const {samples, sampleRate, duration, name} = currentBuffer;
+  const period = Math.max(8, parseInt(periodEl.value)||25);
+  const gain = Math.max(0.1, parseFloat(gainEl.value)||2.5);
+  const smooth = Math.max(1, parseInt(smoothEl.value)||3);
+
+  // spectrogram params
+  const nperseg = Math.round((period/1000) * sampleRate) || 1024;
+  const window = hannWindow(nperseg);
+  const hop = nperseg; // no overlap; smoothing later handles continuity
+
+  // frame FFTs
+  const frames = [];
+  for (let start = 0; start + nperseg <= samples.length; start += hop) {
+    const frame = new Float64Array(nperseg);
+    for (let i=0;i<nperseg;i++) frame[i] = (samples[start+i] * window[i]) || 0;
+    const {re, im, n} = fftReIm(frame);
+    const mag = magnitudeFromReIm(re, im);
+    frames.push({mag, start});
+  }
+  if (frames.length===0) { setStatus("Audio too short for chosen period."); output.textContent="// too short"; return; }
+
+  // FFT frequencies
+  const fftFreqs = new Float64Array(nperseg);
+  for (let k=0;k<nperseg;k++) fftFreqs[k] = (k * sampleRate) / nperseg;
+
+  // build spectrum lists per frame [ {freq, amp} ... ]
+  const fftData = frames.map(f => {
+    const list = [];
+    const half = Math.floor(nperseg/2);
+    for (let k=0;k<half;k++) {
+      list.push({freq: fftFreqs[k], amp: f.mag[k]});
+    }
+    return list;
+  });
+
+  // global max for normalization
+  let globalMax = 0;
+  for (const s of fftData) for (const x of s) if (x.amp > globalMax) globalMax = x.amp;
+  if (globalMax === 0) globalMax = 1;
+
+  // create threads (one per bucket)
+  const threads = buckets.map(()=>[]);
+
+  // forum trick: pick highest in each bucket, use prev boundary
+  for (let i=0;i<fftData.length;i++){
+    let prev = 0;
+    const spectrum = fftData[i];
+    for (let b=0;b<buckets.length;b++){
+      const high = buckets[b];
+      // find best in prev..high
+      let best = {freq:0, amp:0};
+      for (let s=0;s<spectrum.length;s++){
+        const entry = spectrum[s];
+        if (entry.freq >= prev && entry.freq < high) {
+          if (entry.amp > best.amp) best = entry;
+        }
+      }
+      const raw = Math.round((best.amp / globalMax) * 1023);
+      const scaled = clamp(Math.round(raw * gain), 0, 1024);
+      threads[b].push({
+        startHz: Math.max(1, Math.round(best.freq || 0)),
+        endHz: Math.max(1, Math.round(best.freq || 0)),
+        startAmp: scaled,
+        endAmp: scaled,
+        duration: period,
+        waveform: 3
+      });
+      prev = high;
+    }
+  }
+
+  // smoothing per thread (moving average on amplitude)
+  const ws = Math.max(1, smooth);
+  for (let b=0;b<threads.length;b++){
+    const amps = threads[b].map(i=>i.startAmp);
+    const sm = new Array(amps.length);
+    for (let j=0;j<amps.length;j++){
+      let sum=0, count=0;
+      for (let k=j-Math.floor(ws/2); k<=j+Math.floor(ws/2); k++){
+        if (k>=0 && k<amps.length){ sum+=amps[k]; count++; }
+      }
+      sm[j] = Math.round(sum/count || 0);
+    }
+    for (let j=0;j<threads[b].length;j++){
+      threads[b][j].startAmp = threads[b][j].endAmp = clamp(sm[j], 0, 1024);
+    }
+  }
+
+  // convert each thread to hex buffer
+  const hexBuffers = threads.map(thread => packInstructionArray(thread));
+
+  // Compose final TypeScript (exact requested format)
+  const tsLines = [];
+  tsLines.push("namespace music {");
+  tsLines.push("    //% shim=music::queuePlayInstructions");
+  tsLines.push("    export function queuePlayInstructions(timeDelta: number, buf: Buffer) { }");
+  tsLines.push("}");
+  tsLines.push("");
+  tsLines.push("const soundInstructions = [");
+  tsLines.push(hexBuffers.map(h => "    hex`" + h + "`," ).join("\n"));
+  tsLines.push("];");
+  tsLines.push("");
+  tsLines.push("for (const instructions of soundInstructions) {");
+  tsLines.push("    music.queuePlayInstructions(100, instructions);");
+  tsLines.push("}");
+  const ts = tsLines.join("\n");
+
+  output.textContent = ts;
+  setStatus(`Done — ${threads.length} buffers, ${frames.length} slices. Copy/paste into MakeCode.`);
+}
+
+/* copy/download buttons */
+copyBtn.onclick = async ()=>{
+  try { await navigator.clipboard.writeText(output.textContent); setStatus("Copied to clipboard 👍"); }
+  catch(e){ setStatus("Copy failed"); }
+};
+downloadBtn.onclick = ()=>{
+  const blob = new Blob([output.textContent], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = "makecode_audio.ts";
+  a.click();
+};
+
+</script>
+</body>
+</html>
